@@ -238,100 +238,77 @@ def standardize_dataset(df, forced_city=None):
     return df
 
 # ============================================================
-# LOAD DATA (ALWAYS ADD ALMATY & ASTANA)
+# LOAD DATA (UPLOAD VIA INTERFACE IF FILES NOT FOUND)
 # ============================================================
 
 @st.cache_data
-def load_all_data():
+def load_data_from_files(almaty_df, astana_df):
     datasets = []
-    
-    # 1. Almaty
-    almaty_raw = read_csv_safe("air_quality_data.csv")
-    if almaty_raw is not None:
-        almaty = standardize_dataset(almaty_raw, forced_city="Алматы")
-        if not almaty.empty:
-            datasets.append(almaty)
-            st.success(f"✅ Алматы loaded from file: {len(almaty):,} records")
-    
-    # If Almaty not loaded, generate synthetic
-    if not any(d['city'].iloc[0] == 'Алматы' for d in datasets if not d.empty):
-        st.info("ℹ️ Generating synthetic Almaty")
-        np.random.seed(42)
-        dates = pd.date_range('2022-01-01', periods=10000, freq='h')
-        rows = []
-        for d in dates:
-            seasonal = 1 + 0.3 * np.sin((d.month - 1) * 2 * np.pi / 12)
-            daily = 1 + 0.2 * np.sin((d.hour - 8) * 2 * np.pi / 24)
-            pm25 = 35 * seasonal * daily + np.random.randn() * 12
-            pm25 = max(2, pm25)
-            rows.append({
-                'time': d,
-                'city': 'Алматы',
-                'pm2_5': pm25,
-                'pm10': pm25 * 1.2 + np.random.randn() * 10,
-                'carbon_monoxide': 0.5 + np.random.randn() * 0.2,
-                'nitrogen_dioxide': 20 + np.random.randn() * 5,
-                'sulphur_dioxide': 5 + np.random.randn() * 2,
-                'ozone': 30 + np.random.randn() * 10
-            })
-        df_almaty = pd.DataFrame(rows)
-        almaty_std = standardize_dataset(df_almaty, forced_city="Алматы")
-        datasets.append(almaty_std)
-        st.success("✅ Almaty generated synthetically")
-    
-    # 2. Astana
-    astana_raw = read_csv_safe("14.csv")
-    if astana_raw is not None:
-        astana = standardize_dataset(astana_raw, forced_city="Астана")
-        if not astana.empty:
-            datasets.append(astana)
-            st.success(f"✅ Астана loaded from 14.csv: {len(astana):,} records")
-    
-    if not any(d['city'].iloc[0] == 'Астана' for d in datasets if not d.empty):
-        st.info("ℹ️ Generating synthetic Astana")
-        np.random.seed(42)
-        dates = pd.date_range('2022-01-01', periods=10000, freq='h')
-        rows = []
-        for d in dates:
-            seasonal = 1 + 0.3 * np.sin((d.month - 1) * 2 * np.pi / 12)
-            daily = 1 + 0.2 * np.sin((d.hour - 8) * 2 * np.pi / 24)
-            pm25 = 45 * seasonal * daily + np.random.randn() * 15
-            pm25 = max(2, pm25)
-            rows.append({
-                'time': d,
-                'city': 'Астана',
-                'pm2_5': pm25,
-                'pm10': pm25 * 1.2 + np.random.randn() * 10,
-                'carbon_monoxide': 0.5 + np.random.randn() * 0.2,
-                'nitrogen_dioxide': 20 + np.random.randn() * 5,
-                'sulphur_dioxide': 5 + np.random.randn() * 2,
-                'ozone': 30 + np.random.randn() * 10
-            })
-        df_astana = pd.DataFrame(rows)
-        astana_std = standardize_dataset(df_astana, forced_city="Астана")
-        datasets.append(astana_std)
-        st.success("✅ Astana generated synthetically")
-    
+    if almaty_df is not None:
+        almaty_std = standardize_dataset(almaty_df, forced_city="Алматы")
+        if not almaty_std.empty:
+            datasets.append(almaty_std)
+    if astana_df is not None:
+        astana_std = standardize_dataset(astana_df, forced_city="Астана")
+        if not astana_std.empty:
+            datasets.append(astana_std)
     if not datasets:
         return pd.DataFrame()
-    
     combined = pd.concat(datasets, ignore_index=True)
     combined = combined.drop_duplicates(subset=["time", "city", "pm25"])
     return combined
 
-df_full = load_all_data()
-
-if df_full.empty:
-    st.error("❌ No data loaded.")
-    st.stop()
-
 # ============================================================
-# SIDEBAR
+# INTERFACE
 # ============================================================
 
 st.title(T['title'])
 st.markdown(T['author'])
 st.markdown("---")
+
+# Try to load existing files
+almaty_file = read_csv_safe("air_quality_data.csv")
+astana_file = read_csv_safe("14.csv")
+
+if almaty_file is not None or astana_file is not None:
+    # If files exist in the directory, use them
+    almaty_df = almaty_file if almaty_file is not None else None
+    astana_df = astana_file if astana_file is not None else None
+    df_full = load_data_from_files(almaty_df, astana_df)
+    if not df_full.empty:
+        st.success("✅ Data loaded from local files.")
+    else:
+        df_full = pd.DataFrame()
+else:
+    df_full = pd.DataFrame()
+
+# If no data loaded, show upload interface
+if df_full.empty:
+    st.info("📂 **Upload your data files to start analysis.**")
+    col1, col2 = st.columns(2)
+    with col1:
+        uploaded_almaty = st.file_uploader("Upload Алматы data (air_quality_data.csv)", type=['csv'])
+    with col2:
+        uploaded_astana = st.file_uploader("Upload Астана data (14.csv)", type=['csv'])
+    
+    if uploaded_almaty is not None or uploaded_astana is not None:
+        almaty_df = pd.read_csv(uploaded_almaty) if uploaded_almaty is not None else None
+        astana_df = pd.read_csv(uploaded_astana) if uploaded_astana is not None else None
+        df_full = load_data_from_files(almaty_df, astana_df)
+        if not df_full.empty:
+            st.success("✅ Data loaded from uploaded files.")
+        else:
+            st.error("❌ Could not parse uploaded files. Please check format.")
+    else:
+        st.stop()
+
+if df_full.empty:
+    st.error("❌ No data available. Please upload files.")
+    st.stop()
+
+# ============================================================
+# SIDEBAR
+# ============================================================
 
 st.sidebar.header(T['dataset'])
 st.sidebar.success(T['records'].format(len(df_full)))
@@ -351,6 +328,7 @@ selected_city = st.sidebar.selectbox(T['city'], cities)
 
 df_city = df_full[df_full["city"] == selected_city].copy()
 df_city = df_city.sort_values("time")
+df_city.rename(columns={'pm2_5': 'pm25'}, inplace=True)
 
 if len(df_city) < 50:
     st.error(f"❌ Not enough data for **{selected_city}**.")
@@ -372,37 +350,8 @@ for lag in [1, 3, 6, 12, 24]:
 df_model = df_city.dropna().copy()
 
 if len(df_model) < 50:
-    st.warning(f"⚠️ Only {len(df_model)} records after lag features. Generating synthetic data for {selected_city}.")
-    np.random.seed(42)
-    dates = pd.date_range('2022-01-01', periods=10000, freq='h')
-    rows = []
-    for d in dates:
-        seasonal = 1 + 0.3 * np.sin((d.month - 1) * 2 * np.pi / 12)
-        daily = 1 + 0.2 * np.sin((d.hour - 8) * 2 * np.pi / 24)
-        pm25 = 45 * seasonal * daily + np.random.randn() * 15
-        pm25 = max(2, pm25)
-        rows.append({
-            'time': d,
-            'pm2_5': pm25,
-            'pm10': pm25 * 1.2 + np.random.randn() * 10,
-            'carbon_monoxide': 0.5 + np.random.randn() * 0.2,
-            'nitrogen_dioxide': 20 + np.random.randn() * 5,
-            'sulphur_dioxide': 5 + np.random.randn() * 2,
-            'ozone': 30 + np.random.randn() * 10
-        })
-    df_synth = pd.DataFrame(rows)
-    df_synth["city"] = selected_city
-    df_synth["time"] = pd.to_datetime(df_synth["time"])
-    df_synth = df_synth.sort_values("time")
-    df_synth["hour"] = df_synth["time"].dt.hour
-    df_synth["dayofweek"] = df_synth["time"].dt.dayofweek
-    df_synth["month"] = df_synth["time"].dt.month
-    df_synth["day"] = df_synth["time"].dt.day
-    for lag in [1, 3, 6, 12, 24]:
-        df_synth[f"pm25_lag_{lag}"] = df_synth["pm25"].shift(lag)
-    df_synth = df_synth.dropna()
-    df_city = df_synth
-    df_model = df_synth
+    st.error(f"❌ After lag features, only {len(df_model)} records remain.")
+    st.stop()
 
 features = ["hour", "dayofweek", "month", "day",
             "pm25_lag_1", "pm25_lag_3", "pm25_lag_6",
