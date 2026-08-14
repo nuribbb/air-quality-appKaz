@@ -10,170 +10,31 @@ import os
 import warnings
 warnings.filterwarnings('ignore')
 
-st.set_page_config(page_title="Air Quality Prediction / Ауа сапасы / Качество воздуха", layout="wide")
+st.set_page_config(page_title="Air Quality Prediction", layout="wide")
+
+st.title("🌍 Air Quality Prediction System")
+st.markdown("👤 **Author:** Nurikamal Bolatbay")
+st.markdown("---")
 
 # ============================================================
-# LANGUAGE SELECTION
+# HELPER FUNCTIONS FOR READING CSV
 # ============================================================
 
-if 'lang' not in st.session_state:
-    st.session_state.lang = 'kaz'
-
-lang = st.sidebar.radio("🌐 Тіл / Язык / Language", ['🇰🇿 Қазақша', '🇷🇺 Русский', '🇬🇧 English'], index=0)
-
-if lang == '🇰🇿 Қазақша':
-    LANG = 'kaz'
-elif lang == '🇷🇺 Русский':
-    LANG = 'rus'
-else:
-    LANG = 'eng'
-
-# ============================================================
-# TRANSLATIONS
-# ============================================================
-
-T = {}
-
-if LANG == 'kaz':
-    T['title'] = "🌍 Ауа сапасын болжау жүйесі"
-    T['author'] = "👤 **Автор:** Nurikamal Bolatbay"
-    T['dataset'] = "📁 Деректер"
-    T['records'] = "Жазбалар: {:,}"
-    T['cities'] = "Қалалар: {}"
-    T['select_city'] = "📍 Қаланы таңдаңыз"
-    T['city'] = "Қала:"
-    T['r2'] = "R²"
-    T['mae'] = "Орташа қате (MAE)"
-    T['records_short'] = "Жазбалар"
-    T['period'] = "Кезең: {} → {}"
-    T['warning'] = "⚠️ Ерте ескерту жүйесі"
-    T['threshold'] = "Ескерту шегі: {} µg/m³ (ДДҰ)"
-    T['current'] = "Ағымдағы жағдай"
-    T['pm25'] = "PM2.5: {:.1f} µg/m³ — {}"
-    T['forecast_title'] = "Келесі 3 сағатқа болжам:"
-    T['exceeds'] = "⚠️ Шектен асады!"
-    T['ok'] = "✅ Қалыпты"
-    T['warning_alert'] = "🚨 **ЕСКЕРТУ:** PM2.5 мөлшері келесі сағаттарда 50 µg/m³ асуы мүмкін. Сактық шараларын қолданыңыз."
-    T['no_warning'] = "✅ Ескерту жоқ: PM2.5 деңгейі қауіпсіз шекте қалады."
-    T['rec_good'] = "💡 **Ұсыныстар:** Сыртта белсенді болыңыз, бірақ ауа сапасының өзгерістерін бақылаңыз."
-    T['rec_sensitive'] = "💡 **Ұсыныстар:** Сезімтал топтар (балалар, қарттар, тыныс алу аурулары бар адамдар) ұзақ уақыт сыртта болмауы керек."
-    T['rec_bad'] = "💡 **Ұсыныстар:**\n- Маска киіңіз (N95 ұсынылады)\n- Үйде қалыңыз\n- Барлық терезелерді жабыңыз\n- Ауа тазартқышты қосыңыз\n- Сыртта дене жаттығуларынан аулақ болыңыз\n- Есіктерді тығыз жабыңыз\n- Осал топтарды (балалар, қарттар, тыныс алу аурулары бар адамдар) бақылаңыз"
-    T['forecast_plot'] = "📈 PM2.5 болжамы — келесі 3 сағат"
-    T['history'] = "Тарихи деректер"
-    T['now'] = "Қазір"
-    T['forecast'] = "Болжам"
-    T['threshold_line'] = "Қауіп шегі"
-    T['model_perf'] = "📊 Модель сапасы"
-    T['actual'] = "Нақты мәндер"
-    T['predicted'] = "Болжанған мәндер"
-    T['feature_importance'] = "🔍 Белгілердің маңыздылығы"
-    T['feature'] = "Белгі"
-    T['importance'] = "Маңыздылық"
-    T['latest'] = "🔎 Соңғы өлшемдер"
-
-elif LANG == 'rus':
-    T['title'] = "🌍 Система прогнозирования качества воздуха"
-    T['author'] = "👤 **Автор:** Nurikamal Bolatbay"
-    T['dataset'] = "📁 Данные"
-    T['records'] = "Записей: {:,}"
-    T['cities'] = "Городов: {}"
-    T['select_city'] = "📍 Выберите город"
-    T['city'] = "Город:"
-    T['r2'] = "R²"
-    T['mae'] = "Средняя ошибка (MAE)"
-    T['records_short'] = "Записей"
-    T['period'] = "Период: {} → {}"
-    T['warning'] = "⚠️ Система раннего предупреждения"
-    T['threshold'] = "Порог предупреждения: {} µg/m³ (ВОЗ)"
-    T['current'] = "Текущее состояние"
-    T['pm25'] = "PM2.5: {:.1f} µg/m³ — {}"
-    T['forecast_title'] = "Прогноз на следующие 3 часа:"
-    T['exceeds'] = "⚠️ Превышает порог!"
-    T['ok'] = "✅ Норма"
-    T['warning_alert'] = "🚨 **ВНИМАНИЕ:** Прогнозируется превышение безопасного порога (50 µg/m³) в ближайшие часы. Примите меры."
-    T['no_warning'] = "✅ Предупреждений нет: уровень PM2.5 останется ниже порога."
-    T['rec_good'] = "💡 **Рекомендации:** Наслаждайтесь активностью на улице, но следите за изменениями качества воздуха."
-    T['rec_sensitive'] = "💡 **Рекомендации:** Чувствительным группам (дети, пожилые, люди с респираторными заболеваниями) следует ограничить длительное пребывание на улице."
-    T['rec_bad'] = "💡 **Рекомендации:**\n- Используйте маску (N95 рекомендуется)\n- Оставайтесь дома\n- Закройте все окна\n- Включите очиститель воздуха\n- Избегайте физической активности на улице\n- Держите двери закрытыми\n- Следите за уязвимыми группами (дети, пожилые, люди с респираторными заболеваниями)"
-    T['forecast_plot'] = "📈 Прогноз PM2.5 — следующие 3 часа"
-    T['history'] = "Исторические данные"
-    T['now'] = "Сейчас"
-    T['forecast'] = "Прогноз"
-    T['threshold_line'] = "Порог опасности"
-    T['model_perf'] = "📊 Качество модели"
-    T['actual'] = "Фактические значения"
-    T['predicted'] = "Предсказанные значения"
-    T['feature_importance'] = "🔍 Важность признаков"
-    T['feature'] = "Признак"
-    T['importance'] = "Важность"
-    T['latest'] = "🔎 Последние измерения"
-
-else:  # English
-    T['title'] = "🌍 Air Quality Prediction System"
-    T['author'] = "👤 **Author:** Nurikamal Bolatbay"
-    T['dataset'] = "📁 Dataset"
-    T['records'] = "Records: {:,}"
-    T['cities'] = "Cities: {}"
-    T['select_city'] = "📍 Select City"
-    T['city'] = "City:"
-    T['r2'] = "R² Score"
-    T['mae'] = "Mean Absolute Error (MAE)"
-    T['records_short'] = "Records"
-    T['period'] = "Period: {} → {}"
-    T['warning'] = "⚠️ Early Warning System"
-    T['threshold'] = "Warning threshold: {} µg/m³ (WHO)"
-    T['current'] = "Current Status"
-    T['pm25'] = "PM2.5: {:.1f} µg/m³ — {}"
-    T['forecast_title'] = "Forecast for the next 3 hours:"
-    T['exceeds'] = "⚠️ Exceeds threshold!"
-    T['ok'] = "✅ OK"
-    T['warning_alert'] = "🚨 **WARNING:** PM2.5 is forecast to exceed the safe threshold (50 µg/m³) within the next few hours. Take precautions."
-    T['no_warning'] = "✅ No warning: PM2.5 is expected to remain below the threshold."
-    T['rec_good'] = "💡 **Recommendations:** Enjoy outdoor activities, but stay aware of any changes in air quality."
-    T['rec_sensitive'] = "💡 **Recommendations:** Sensitive groups (children, elderly, people with respiratory conditions) should limit prolonged outdoor exertion."
-    T['rec_bad'] = "💡 **Recommendations:**\n- Wear a mask (N95 recommended)\n- Stay indoors\n- Close all windows\n- Use an air purifier\n- Avoid outdoor physical activities\n- Keep doors sealed\n- Monitor vulnerable groups (children, elderly, those with respiratory conditions)"
-    T['forecast_plot'] = "📈 PM2.5 Forecast — Next 3 Hours"
-    T['history'] = "Historical Data"
-    T['now'] = "Now"
-    T['forecast'] = "Forecast"
-    T['threshold_line'] = "Warning threshold"
-    T['model_perf'] = "📊 Model Performance"
-    T['actual'] = "Actual"
-    T['predicted'] = "Predicted"
-    T['feature_importance'] = "🔍 Feature Importance"
-    T['feature'] = "Feature"
-    T['importance'] = "Importance"
-    T['latest'] = "🔎 View latest measurements"
-
-# ============================================================
-# LEVELS
-# ============================================================
-
-PM25_LEVELS = [
-    (0, 12, "Good", "Қалыпты", "Хорошо", "🟢"),
-    (12.1, 35.4, "Moderate", "Орташа", "Умеренно", "🟡"),
-    (35.5, 55.4, "Unhealthy for Sensitive Groups", "Сезімтал топтар үшін қауіпті", "Неблагоприятно для чувствительных групп", "🟠"),
-    (55.5, 150.4, "Unhealthy", "Қауіпті", "Неблагоприятно", "🔴"),
-    (150.5, 250.4, "Very Unhealthy", "Өте қауіпті", "Очень неблагоприятно", "🟣"),
-    (250.5, float('inf'), "Hazardous", "Қатерлі", "Опасно", "⚫")
-]
-
-def get_level(pm25):
-    for low, high, eng, kaz, rus, emoji in PM25_LEVELS:
-        if low <= pm25 <= high:
-            if LANG == 'kaz':
-                return kaz, emoji
-            elif LANG == 'rus':
-                return rus, emoji
-            else:
-                return eng, emoji
-    return "Unknown", "❓"
-
-# ============================================================
-# READ CSV (SAFE, WITH ERROR HANDLING)
-# ============================================================
+def find_column(df, possible_names):
+    """Find column by exact or partial match."""
+    cols_lower = {str(c).strip().lower(): c for c in df.columns}
+    for name in possible_names:
+        if name.lower() in cols_lower:
+            return cols_lower[name.lower()]
+    for c in df.columns:
+        c_lower = str(c).strip().lower()
+        for name in possible_names:
+            if name.lower() in c_lower:
+                return c
+    return None
 
 def read_csv_safe(filename):
+    """Try to read CSV with multiple separators and encodings."""
     if not os.path.exists(filename):
         return None
     for sep in [',', ';', '\t']:
@@ -186,160 +47,156 @@ def read_csv_safe(filename):
                 pass
     return None
 
-def find_column(df, possible_names):
-    cols_lower = {str(c).strip().lower(): c for c in df.columns}
-    for name in possible_names:
-        if name.lower() in cols_lower:
-            return cols_lower[name.lower()]
-    for c in df.columns:
-        c_lower = str(c).strip().lower()
-        for name in possible_names:
-            if name.lower() in c_lower:
-                return c
-    return None
-
-def standardize_dataset_safe(df, forced_city=None):
-    """Attempt to standardize dataset, return None if fails."""
-    try:
-        if df is None or df.empty:
-            return None
-        df = df.copy()
-        df.columns = [str(c).strip() for c in df.columns]
-        
-        time_col = find_column(df, ["time", "datetime", "date", "timestamp", "last_updated"])
-        if time_col is None:
-            possible = pd.to_datetime(df.iloc[:, 0], errors='coerce')
-            if possible.notna().sum() > len(df) * 0.5:
-                time_col = df.columns[0]
-        if time_col is None:
-            return None
-        
-        df["time"] = pd.to_datetime(df[time_col], errors='coerce', utc=True)
-        try:
-            df["time"] = df["time"].dt.tz_localize(None)
-        except:
-            pass
-        
-        pm_col = find_column(df, ["pm2.5", "pm25", "pm2_5", "pm_2_5", "pm 2.5", "pm2"])
-        if pm_col is None:
-            return None
-        df["pm25"] = pd.to_numeric(df[pm_col], errors='coerce')
-        
-        city_col = find_column(df, ["city", "location", "place", "site"])
-        if forced_city is not None:
-            df["city"] = forced_city
-        elif city_col is not None:
-            df["city"] = df[city_col].astype(str).str.strip()
-        else:
-            df["city"] = "Unknown"
-        
-        df = df[["time", "city", "pm25"]].copy()
-        df = df.dropna(subset=["time", "pm25"])
-        df = df[(df["pm25"] >= 0) & (df["pm25"] <= 1000)]
-        df = df.sort_values("time")
-        if df.empty:
-            return None
-        return df
-    except:
+def standardize_dataset(df, forced_city=None):
+    """
+    Convert any dataset to a standard format: time, city, pm25.
+    Returns None if conversion fails.
+    """
+    if df is None or df.empty:
         return None
-
-# ============================================================
-# GENERATE SYNTHETIC DATA (FALLBACK)
-# ============================================================
-
-def generate_synthetic_city(city_name, base_pm25, amp, noise, periods=10000):
-    np.random.seed(hash(city_name) % 10000)
-    dates = pd.date_range('2022-01-01', periods=periods, freq='h')
-    rows = []
-    for d in dates:
-        seasonal = 1 + 0.3 * np.sin((d.month - 1) * 2 * np.pi / 12)
-        daily = 1 + 0.2 * np.sin((d.hour - 8) * 2 * np.pi / 24)
-        pm25 = base_pm25 * seasonal * daily + np.random.randn() * noise
-        pm25 = max(2, pm25)
-        rows.append({
-            'time': d,
-            'city': city_name,
-            'pm2_5': pm25,
-            'pm10': pm25 * 1.2 + np.random.randn() * 10,
-            'carbon_monoxide': 0.5 + np.random.randn() * 0.2,
-            'nitrogen_dioxide': 20 + np.random.randn() * 5,
-            'sulphur_dioxide': 5 + np.random.randn() * 2,
-            'ozone': 30 + np.random.randn() * 10
-        })
-    df = pd.DataFrame(rows)
-    df['time'] = pd.to_datetime(df['time'])
+    df = df.copy()
+    df.columns = [str(c).strip() for c in df.columns]
+    
+    # Time column
+    time_col = find_column(df, ["time", "datetime", "date", "timestamp", "last_updated"])
+    if time_col is None:
+        # Try first column
+        possible = pd.to_datetime(df.iloc[:, 0], errors='coerce')
+        if possible.notna().sum() > len(df) * 0.5:
+            time_col = df.columns[0]
+    if time_col is None:
+        return None
+    
+    df["time"] = pd.to_datetime(df[time_col], errors='coerce', utc=True)
+    try:
+        df["time"] = df["time"].dt.tz_localize(None)
+    except:
+        pass
+    
+    # PM2.5 column
+    pm_col = find_column(df, ["pm2.5", "pm25", "pm2_5", "pm_2_5", "pm 2.5", "pm2"])
+    if pm_col is None:
+        return None
+    df["pm25"] = pd.to_numeric(df[pm_col], errors='coerce')
+    
+    # City column
+    city_col = find_column(df, ["city", "location", "place", "site"])
+    if forced_city is not None:
+        df["city"] = forced_city
+    elif city_col is not None:
+        df["city"] = df[city_col].astype(str).str.strip()
+    else:
+        df["city"] = "Unknown"
+    
+    df = df[["time", "city", "pm25"]].copy()
+    df = df.dropna(subset=["time", "pm25"])
+    df = df[(df["pm25"] >= 0) & (df["pm25"] <= 1000)]
+    df = df.sort_values("time")
+    if df.empty:
+        return None
     return df
 
 # ============================================================
-# LOAD DATA (REAL + SYNTHETIC FALLBACK)
+# LOAD DATA FROM FILES (NO SYNTHETIC)
 # ============================================================
 
 @st.cache_data
-def load_all_data():
+def load_data_from_files():
     datasets = []
     
-    # Try to load real Almaty
+    # Almaty
     almaty_raw = read_csv_safe("air_quality_data.csv")
     if almaty_raw is not None:
-        almaty_std = standardize_dataset_safe(almaty_raw, forced_city="Алматы")
-        if almaty_std is not None:
-            datasets.append(almaty_std)
-            st.success("✅ Алматы loaded from file")
+        almaty = standardize_dataset(almaty_raw, forced_city="Almaty")
+        if almaty is not None:
+            datasets.append(almaty)
         else:
-            st.warning("⚠️ Almaty file could not be parsed. Using synthetic.")
+            st.warning("⚠️ air_quality_data.csv found but could not be parsed. Check column names.")
     else:
-        st.info("ℹ️ air_quality_data.csv not found. Using synthetic Almaty.")
+        st.info("ℹ️ air_quality_data.csv not found in the current directory.")
     
-    # Try to load real Astana
+    # Astana
     astana_raw = read_csv_safe("14.csv")
     if astana_raw is not None:
-        astana_std = standardize_dataset_safe(astana_raw, forced_city="Астана")
-        if astana_std is not None:
-            datasets.append(astana_std)
-            st.success("✅ Астана loaded from file")
+        astana = standardize_dataset(astana_raw, forced_city="Astana")
+        if astana is not None:
+            datasets.append(astana)
         else:
-            st.warning("⚠️ Astana file could not be parsed. Using synthetic.")
+            st.warning("⚠️ 14.csv found but could not be parsed. Check column names.")
     else:
-        st.info("ℹ️ 14.csv not found. Using synthetic Astana.")
+        st.info("ℹ️ 14.csv not found in the current directory.")
     
-    # If any city missing, generate synthetic
-    if not any(d['city'].iloc[0] == 'Алматы' for d in datasets if not d.empty):
-        df_almaty = generate_synthetic_city("Алматы", base_pm25=35, amp=25, noise=12)
-        datasets.append(df_almaty)
-    if not any(d['city'].iloc[0] == 'Астана' for d in datasets if not d.empty):
-        df_astana = generate_synthetic_city("Астана", base_pm25=45, amp=30, noise=15)
-        datasets.append(df_astana)
+    if not datasets:
+        return None
     
     combined = pd.concat(datasets, ignore_index=True)
-    combined = combined.drop_duplicates(subset=["time", "city", "pm2_5"])
-    combined.rename(columns={'pm2_5': 'pm25'}, inplace=True)
+    combined = combined.drop_duplicates(subset=["time", "city", "pm25"])
     return combined
 
-df_full = load_all_data()
+# Try to load from files
+df_full = load_data_from_files()
 
-if df_full.empty:
-    st.error("❌ No data available.")
+# If no data, show upload interface
+if df_full is None:
+    st.warning("No data files found. Please upload your CSV files below.")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        file1 = st.file_uploader("Upload Almaty data (air_quality_data.csv)", type=['csv'])
+    with col2:
+        file2 = st.file_uploader("Upload Astana data (14.csv)", type=['csv'])
+    
+    if file1 is not None or file2 is not None:
+        datasets = []
+        if file1 is not None:
+            try:
+                df1 = pd.read_csv(file1)
+                std1 = standardize_dataset(df1, forced_city="Almaty")
+                if std1 is not None:
+                    datasets.append(std1)
+                    st.success("✅ Almaty data loaded successfully.")
+                else:
+                    st.error("❌ Could not parse Almaty file. Check column names (need time, PM2.5).")
+            except Exception as e:
+                st.error(f"Error reading Almaty file: {e}")
+        if file2 is not None:
+            try:
+                df2 = pd.read_csv(file2)
+                std2 = standardize_dataset(df2, forced_city="Astana")
+                if std2 is not None:
+                    datasets.append(std2)
+                    st.success("✅ Astana data loaded successfully.")
+                else:
+                    st.error("❌ Could not parse Astana file. Check column names (need time, PM2.5).")
+            except Exception as e:
+                st.error(f"Error reading Astana file: {e}")
+        
+        if datasets:
+            df_full = pd.concat(datasets, ignore_index=True)
+            df_full = df_full.drop_duplicates(subset=["time", "city", "pm25"])
+            st.success(f"✅ Total records loaded: {len(df_full):,}")
+        else:
+            st.error("❌ No valid data could be loaded. Please check your files.")
+            st.stop()
+    else:
+        st.stop()
+
+# If still no data, stop
+if df_full is None or df_full.empty:
+    st.error("❌ No data available. Please upload valid CSV files.")
     st.stop()
 
 # ============================================================
 # SIDEBAR
 # ============================================================
 
-st.title(T['title'])
-st.markdown(T['author'])
-st.markdown("---")
+st.sidebar.header("📁 Dataset")
+st.sidebar.success(f"Loaded records: {len(df_full):,}")
+st.sidebar.write(f"Cities: {df_full['city'].nunique()}")
 
-st.sidebar.header(T['dataset'])
-st.sidebar.success(T['records'].format(len(df_full)))
-st.sidebar.write(T['cities'].format(df_full['city'].nunique()))
-
-st.sidebar.header(T['select_city'])
+st.sidebar.header("📍 Select City")
 cities = sorted(df_full["city"].dropna().unique())
-for city in ["Астана", "Алматы"]:
-    if city in cities:
-        cities.remove(city)
-        cities.insert(0, city)
-selected_city = st.sidebar.selectbox(T['city'], cities)
+selected_city = st.sidebar.selectbox("City:", cities)
 
 # ============================================================
 # CITY DATA
@@ -347,7 +204,6 @@ selected_city = st.sidebar.selectbox(T['city'], cities)
 
 df_city = df_full[df_full["city"] == selected_city].copy()
 df_city = df_city.sort_values("time")
-df_city.rename(columns={'pm25': 'pm25'}, inplace=True)
 
 if len(df_city) < 50:
     st.error(f"❌ Not enough data for **{selected_city}**.")
@@ -369,7 +225,7 @@ for lag in [1, 3, 6, 12, 24]:
 df_model = df_city.dropna().copy()
 
 if len(df_model) < 50:
-    st.error(f"❌ After lag features, only {len(df_model)} records remain.")
+    st.error(f"❌ After creating lag features, only {len(df_model)} records remain.")
     st.stop()
 
 features = ["hour", "dayofweek", "month", "day",
@@ -394,14 +250,11 @@ mae = mean_absolute_error(y_test, y_pred)
 
 st.subheader(f"📊 {selected_city}")
 c1, c2, c3 = st.columns(3)
-c1.metric(T['r2'], f"{r2:.4f}")
-c2.metric(T['mae'], f"{mae:.2f} µg/m³")
-c3.metric(T['records_short'], f"{len(df_city):,}")
+c1.metric("R² Score", f"{r2:.4f}")
+c2.metric("MAE", f"{mae:.2f} µg/m³")
+c3.metric("Records", f"{len(df_city):,}")
 
-st.caption(T['period'].format(
-    df_city['time'].min().strftime('%Y-%m-%d'),
-    df_city['time'].max().strftime('%Y-%m-%d')
-))
+st.caption(f"Data period: {df_city['time'].min().strftime('%Y-%m-%d')} → {df_city['time'].max().strftime('%Y-%m-%d')}")
 st.markdown("---")
 
 # ============================================================
@@ -441,50 +294,40 @@ last_time = df_city["time"].iloc[-1]
 forecast_values = forecast_future(model, df_city, features, hours_ahead=3)
 
 # ============================================================
-# EARLY WARNING SYSTEM
+# EARLY WARNING
 # ============================================================
 
-st.header(T['warning'])
+st.header("⚠️ Early Warning System")
 WARNING_THRESHOLD = 50
-st.caption(T['threshold'].format(WARNING_THRESHOLD))
+st.caption(f"Warning threshold: {WARNING_THRESHOLD} µg/m³ (WHO)")
 
-current_label, current_emoji = get_level(last_actual)
-st.subheader(f"{current_emoji} {T['current']}: {current_label}")
-st.write(T['pm25'].format(last_actual, current_label))
+if last_actual < 50:
+    status = "🟢 Good"
+else:
+    status = "🔴 Unhealthy"
 
-st.write("---")
-st.write("**" + T['forecast_title'] + "**")
+st.subheader(f"{status} — Current PM2.5: {last_actual:.1f} µg/m³")
 
 cols = st.columns(3)
 for i, val in enumerate(forecast_values):
-    label, emoji = get_level(val)
+    is_warning = val >= WARNING_THRESHOLD
     future_time = last_time + timedelta(hours=i+1)
     with cols[i]:
         st.metric(
-            label=f"{emoji} +{i+1}ч ({future_time.strftime('%H:%M')})",
+            label=f"{'🔴' if is_warning else '🟢'} +{i+1}h ({future_time.strftime('%H:%M')})",
             value=f"{val:.1f} µg/m³",
             delta=f"{val - last_actual:+.1f}"
         )
-        st.caption(f"**{label}**")
-        if val >= WARNING_THRESHOLD:
-            st.warning(T['exceeds'])
+        if is_warning:
+            st.warning("⚠️ Exceeds threshold")
         else:
-            st.success(T['ok'])
+            st.success("✅ OK")
 
-max_forecast = max(forecast_values)
-if max_forecast >= WARNING_THRESHOLD:
-    st.error(T['warning_alert'])
+if max(forecast_values) >= WARNING_THRESHOLD:
+    st.error("🚨 WARNING: PM2.5 is forecast to exceed 50 µg/m³ in the next few hours.")
+    st.info("💡 Recommendations: Wear a mask, stay indoors, close windows, use air purifier.")
 else:
-    st.success(T['no_warning'])
-
-max_label, _ = get_level(max_forecast)
-
-if max_label in ["Неблагоприятно", "Очень неблагоприятно", "Опасно", "Қауіпті", "Өте қауіпті", "Қатерлі", "Unhealthy", "Very Unhealthy", "Hazardous"]:
-    st.info(T['rec_bad'])
-elif max_label in ["Неблагоприятно для чувствительных групп", "Сезімтал топтар үшін қауіпті", "Unhealthy for Sensitive Groups"]:
-    st.info(T['rec_sensitive'])
-else:
-    st.info(T['rec_good'])
+    st.success("✅ No warning: PM2.5 is expected to remain below the threshold.")
 
 st.markdown("---")
 
@@ -492,57 +335,53 @@ st.markdown("---")
 # PLOTS
 # ============================================================
 
-st.header(T['forecast_plot'])
+st.header("📈 PM2.5 Forecast — Next 3 Hours")
 fig, ax = plt.subplots(figsize=(12, 5))
 history = df_city["pm25"].iloc[-24:].values
 history_x = np.arange(len(history))
 forecast_x = np.arange(len(history), len(history) + len(forecast_values))
-ax.plot(history_x, history, label=T['history'], linewidth=2)
-ax.plot(forecast_x, forecast_values, "--o", label=T['forecast'], linewidth=2)
-ax.axhline(WARNING_THRESHOLD, linestyle=":", linewidth=2, label=T['threshold_line'])
-ax.axvline(len(history) - 1, linestyle="--", linewidth=1, label=T['now'])
+ax.plot(history_x, history, label="Historical", linewidth=2)
+ax.plot(forecast_x, forecast_values, "--o", label="Forecast", linewidth=2)
+ax.axhline(WARNING_THRESHOLD, linestyle=":", linewidth=2, label="Warning threshold")
+ax.axvline(len(history) - 1, linestyle="--", linewidth=1, label="Now")
 ax.set_xlabel("Time (hours)")
 ax.set_ylabel("PM2.5 (µg/m³)")
-ax.set_title(f"{selected_city}: PM2.5 Forecast")
+ax.set_title(f"{selected_city} — PM2.5 Forecast")
 ax.legend()
 ax.grid(alpha=0.3)
-st.pyplot(fig, clear_figure=True)
+st.pyplot(fig)
 plt.close(fig)
 
 st.markdown("---")
-st.header(T['model_perf'])
+st.header("📊 Model Performance")
 fig2, ax2 = plt.subplots(figsize=(12, 5))
 n = min(150, len(y_test))
-ax2.plot(range(n), y_test.iloc[:n].values, label=T['actual'], linewidth=2)
-ax2.plot(range(n), y_pred[:n], label=T['predicted'], linewidth=2)
+ax2.plot(range(n), y_test.iloc[:n].values, label="Actual", linewidth=2)
+ax2.plot(range(n), y_pred[:n], label="Predicted", linewidth=2)
 ax2.set_xlabel("Test observations")
 ax2.set_ylabel("PM2.5 (µg/m³)")
-ax2.set_title(f"{selected_city}: Actual vs Predicted")
+ax2.set_title(f"{selected_city} — Actual vs Predicted")
 ax2.legend()
 ax2.grid(alpha=0.3)
-st.pyplot(fig2, clear_figure=True)
+st.pyplot(fig2)
 plt.close(fig2)
 
 st.markdown("---")
-st.header(T['feature_importance'])
-importance_df = pd.DataFrame({
-    T['feature']: features,
-    T['importance']: model.feature_importances_
-})
-importance_df = importance_df.sort_values(T['importance'], ascending=True)
-
+st.header("🔍 Feature Importance")
+importance_df = pd.DataFrame({"Feature": features, "Importance": model.feature_importances_})
+importance_df = importance_df.sort_values("Importance", ascending=True)
 fig3, ax3 = plt.subplots(figsize=(10, 6))
-ax3.barh(importance_df[T['feature']], importance_df[T['importance']])
-ax3.set_xlabel(T['importance'])
-ax3.set_ylabel(T['feature'])
-ax3.set_title(f"{selected_city}: {T['feature_importance']}")
+ax3.barh(importance_df["Feature"], importance_df["Importance"])
+ax3.set_xlabel("Importance")
+ax3.set_ylabel("Feature")
+ax3.set_title(f"{selected_city} — Feature Importance")
 ax3.grid(axis="x", alpha=0.3)
-st.pyplot(fig3, clear_figure=True)
+st.pyplot(fig3)
 plt.close(fig3)
 
 st.markdown("---")
-with st.expander(T['latest']):
+with st.expander("🔎 View latest measurements"):
     st.dataframe(df_city[["time", "city", "pm25"]].tail(20), use_container_width=True)
 
 st.markdown("---")
-st.caption("Air Quality Prediction System ©️ 2026 Nurikamal Bolatbay")
+st.caption("Air Quality Prediction System © 2026 Nurikamal Bolatbay")
