@@ -170,7 +170,7 @@ def get_level(pm25):
     return "Unknown", "❓"
 
 # ============================================================
-# READ CSV (AUTO-DETECT COLUMNS)
+# READ CSV (SAFE, WITH ERROR HANDLING)
 # ============================================================
 
 def read_csv_safe(filename):
@@ -198,117 +198,136 @@ def find_column(df, possible_names):
                 return c
     return None
 
-def standardize_dataset(df, forced_city=None):
-    if df is None or df.empty:
-        return pd.DataFrame()
-    df = df.copy()
-    df.columns = [str(c).strip() for c in df.columns]
-    
-    time_col = find_column(df, ["time", "datetime", "date", "timestamp", "last_updated"])
-    if time_col is None:
-        possible = pd.to_datetime(df.iloc[:, 0], errors='coerce')
-        if possible.notna().sum() > len(df) * 0.5:
-            time_col = df.columns[0]
-    if time_col is None:
-        return pd.DataFrame()
-    
-    df["time"] = pd.to_datetime(df[time_col], errors='coerce', utc=True)
+def standardize_dataset_safe(df, forced_city=None):
+    """Attempt to standardize dataset, return None if fails."""
     try:
-        df["time"] = df["time"].dt.tz_localize(None)
+        if df is None or df.empty:
+            return None
+        df = df.copy()
+        df.columns = [str(c).strip() for c in df.columns]
+        
+        time_col = find_column(df, ["time", "datetime", "date", "timestamp", "last_updated"])
+        if time_col is None:
+            possible = pd.to_datetime(df.iloc[:, 0], errors='coerce')
+            if possible.notna().sum() > len(df) * 0.5:
+                time_col = df.columns[0]
+        if time_col is None:
+            return None
+        
+        df["time"] = pd.to_datetime(df[time_col], errors='coerce', utc=True)
+        try:
+            df["time"] = df["time"].dt.tz_localize(None)
+        except:
+            pass
+        
+        pm_col = find_column(df, ["pm2.5", "pm25", "pm2_5", "pm_2_5", "pm 2.5", "pm2"])
+        if pm_col is None:
+            return None
+        df["pm25"] = pd.to_numeric(df[pm_col], errors='coerce')
+        
+        city_col = find_column(df, ["city", "location", "place", "site"])
+        if forced_city is not None:
+            df["city"] = forced_city
+        elif city_col is not None:
+            df["city"] = df[city_col].astype(str).str.strip()
+        else:
+            df["city"] = "Unknown"
+        
+        df = df[["time", "city", "pm25"]].copy()
+        df = df.dropna(subset=["time", "pm25"])
+        df = df[(df["pm25"] >= 0) & (df["pm25"] <= 1000)]
+        df = df.sort_values("time")
+        if df.empty:
+            return None
+        return df
     except:
-        pass
-    
-    pm_col = find_column(df, ["pm2.5", "pm25", "pm2_5", "pm_2_5", "pm 2.5", "pm2"])
-    if pm_col is None:
-        return pd.DataFrame()
-    df["pm25"] = pd.to_numeric(df[pm_col], errors='coerce')
-    
-    city_col = find_column(df, ["city", "location", "place", "site"])
-    if forced_city is not None:
-        df["city"] = forced_city
-    elif city_col is not None:
-        df["city"] = df[city_col].astype(str).str.strip()
-    else:
-        df["city"] = "Unknown"
-    
-    df = df[["time", "city", "pm25"]].copy()
-    df = df.dropna(subset=["time", "pm25"])
-    df = df[(df["pm25"] >= 0) & (df["pm25"] <= 1000)]
-    df = df.sort_values("time")
+        return None
+
+# ============================================================
+# GENERATE SYNTHETIC DATA (FALLBACK)
+# ============================================================
+
+def generate_synthetic_city(city_name, base_pm25, amp, noise, periods=10000):
+    np.random.seed(hash(city_name) % 10000)
+    dates = pd.date_range('2022-01-01', periods=periods, freq='h')
+    rows = []
+    for d in dates:
+        seasonal = 1 + 0.3 * np.sin((d.month - 1) * 2 * np.pi / 12)
+        daily = 1 + 0.2 * np.sin((d.hour - 8) * 2 * np.pi / 24)
+        pm25 = base_pm25 * seasonal * daily + np.random.randn() * noise
+        pm25 = max(2, pm25)
+        rows.append({
+            'time': d,
+            'city': city_name,
+            'pm2_5': pm25,
+            'pm10': pm25 * 1.2 + np.random.randn() * 10,
+            'carbon_monoxide': 0.5 + np.random.randn() * 0.2,
+            'nitrogen_dioxide': 20 + np.random.randn() * 5,
+            'sulphur_dioxide': 5 + np.random.randn() * 2,
+            'ozone': 30 + np.random.randn() * 10
+        })
+    df = pd.DataFrame(rows)
+    df['time'] = pd.to_datetime(df['time'])
     return df
 
 # ============================================================
-# LOAD DATA (UPLOAD VIA INTERFACE IF FILES NOT FOUND)
+# LOAD DATA (REAL + SYNTHETIC FALLBACK)
 # ============================================================
 
 @st.cache_data
-def load_data_from_files(almaty_df, astana_df):
+def load_all_data():
     datasets = []
-    if almaty_df is not None:
-        almaty_std = standardize_dataset(almaty_df, forced_city="Алматы")
-        if not almaty_std.empty:
+    
+    # Try to load real Almaty
+    almaty_raw = read_csv_safe("air_quality_data.csv")
+    if almaty_raw is not None:
+        almaty_std = standardize_dataset_safe(almaty_raw, forced_city="Алматы")
+        if almaty_std is not None:
             datasets.append(almaty_std)
-    if astana_df is not None:
-        astana_std = standardize_dataset(astana_df, forced_city="Астана")
-        if not astana_std.empty:
+            st.success("✅ Алматы loaded from file")
+        else:
+            st.warning("⚠️ Almaty file could not be parsed. Using synthetic.")
+    else:
+        st.info("ℹ️ air_quality_data.csv not found. Using synthetic Almaty.")
+    
+    # Try to load real Astana
+    astana_raw = read_csv_safe("14.csv")
+    if astana_raw is not None:
+        astana_std = standardize_dataset_safe(astana_raw, forced_city="Астана")
+        if astana_std is not None:
             datasets.append(astana_std)
-    if not datasets:
-        return pd.DataFrame()
+            st.success("✅ Астана loaded from file")
+        else:
+            st.warning("⚠️ Astana file could not be parsed. Using synthetic.")
+    else:
+        st.info("ℹ️ 14.csv not found. Using synthetic Astana.")
+    
+    # If any city missing, generate synthetic
+    if not any(d['city'].iloc[0] == 'Алматы' for d in datasets if not d.empty):
+        df_almaty = generate_synthetic_city("Алматы", base_pm25=35, amp=25, noise=12)
+        datasets.append(df_almaty)
+    if not any(d['city'].iloc[0] == 'Астана' for d in datasets if not d.empty):
+        df_astana = generate_synthetic_city("Астана", base_pm25=45, amp=30, noise=15)
+        datasets.append(df_astana)
+    
     combined = pd.concat(datasets, ignore_index=True)
-    combined = combined.drop_duplicates(subset=["time", "city", "pm25"])
+    combined = combined.drop_duplicates(subset=["time", "city", "pm2_5"])
+    combined.rename(columns={'pm2_5': 'pm25'}, inplace=True)
     return combined
 
-# ============================================================
-# INTERFACE
-# ============================================================
-
-st.title(T['title'])
-st.markdown(T['author'])
-st.markdown("---")
-
-# Try to load existing files
-almaty_file = read_csv_safe("air_quality_data.csv")
-astana_file = read_csv_safe("14.csv")
-
-if almaty_file is not None or astana_file is not None:
-    # If files exist in the directory, use them
-    almaty_df = almaty_file if almaty_file is not None else None
-    astana_df = astana_file if astana_file is not None else None
-    df_full = load_data_from_files(almaty_df, astana_df)
-    if not df_full.empty:
-        st.success("✅ Data loaded from local files.")
-    else:
-        df_full = pd.DataFrame()
-else:
-    df_full = pd.DataFrame()
-
-# If no data loaded, show upload interface
-if df_full.empty:
-    st.info("📂 **Upload your data files to start analysis.**")
-    col1, col2 = st.columns(2)
-    with col1:
-        uploaded_almaty = st.file_uploader("Upload Алматы data (air_quality_data.csv)", type=['csv'])
-    with col2:
-        uploaded_astana = st.file_uploader("Upload Астана data (14.csv)", type=['csv'])
-    
-    if uploaded_almaty is not None or uploaded_astana is not None:
-        almaty_df = pd.read_csv(uploaded_almaty) if uploaded_almaty is not None else None
-        astana_df = pd.read_csv(uploaded_astana) if uploaded_astana is not None else None
-        df_full = load_data_from_files(almaty_df, astana_df)
-        if not df_full.empty:
-            st.success("✅ Data loaded from uploaded files.")
-        else:
-            st.error("❌ Could not parse uploaded files. Please check format.")
-    else:
-        st.stop()
+df_full = load_all_data()
 
 if df_full.empty:
-    st.error("❌ No data available. Please upload files.")
+    st.error("❌ No data available.")
     st.stop()
 
 # ============================================================
 # SIDEBAR
 # ============================================================
+
+st.title(T['title'])
+st.markdown(T['author'])
+st.markdown("---")
 
 st.sidebar.header(T['dataset'])
 st.sidebar.success(T['records'].format(len(df_full)))
@@ -328,7 +347,7 @@ selected_city = st.sidebar.selectbox(T['city'], cities)
 
 df_city = df_full[df_full["city"] == selected_city].copy()
 df_city = df_city.sort_values("time")
-df_city.rename(columns={'pm2_5': 'pm25'}, inplace=True)
+df_city.rename(columns={'pm25': 'pm25'}, inplace=True)
 
 if len(df_city) < 50:
     st.error(f"❌ Not enough data for **{selected_city}**.")
