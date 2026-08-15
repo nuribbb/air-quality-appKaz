@@ -15,74 +15,54 @@ st.markdown("👤 **Author:** Nurikamal Bolatbay")
 st.markdown("---")
 
 # ============================================================
-# READ DATA FROM GOOGLE DRIVE
+# GOOGLE DRIVE FILE IDs
 # ============================================================
 
-def read_csv_from_drive(file_id):
-    """Download CSV from Google Drive using file ID."""
+ALMATY_ID = "1NKll16FnrW9i9D48n5k0UpSzN6HQcBQQ"
+ASTANA_ID = "1vx5cGXYwp3NY2kVQnClzRCHNUgof5KW"
+
+def load_csv_from_drive(file_id):
     url = f"https://drive.google.com/uc?export=download&id={file_id}"
     try:
-        response = requests.get(url, timeout=30)
-        if response.status_code == 200:
-            return pd.read_csv(io.StringIO(response.text))
+        r = requests.get(url, timeout=30)
+        if r.status_code == 200:
+            return pd.read_csv(io.StringIO(r.text))
         else:
             return None
     except:
         return None
 
-# Try to get file IDs from session state or from input
-if 'almaty_id' not in st.session_state:
-    st.session_state.almaty_id = ""
-if 'astana_id' not in st.session_state:
-    st.session_state.astana_id = ""
+# ============================================================
+# SIDEBAR – CITY SELECTION
+# ============================================================
 
-# Show inputs for Google Drive file IDs
-st.sidebar.header("📁 Google Drive Links")
-almaty_id = st.sidebar.text_input("Almaty file ID (air_quality_data.csv)", value=st.session_state.almaty_id)
-astana_id = st.sidebar.text_input("Astana file ID (14.csv)", value=st.session_state.astana_id)
+st.sidebar.header("📍 Select City")
+city_choice = st.sidebar.selectbox("City:", ["Almaty", "Astana"])
 
-if almaty_id:
-    st.session_state.almaty_id = almaty_id
-if astana_id:
-    st.session_state.astana_id = astana_id
-
-# Load data if IDs are provided
-df_full = None
-if st.session_state.almaty_id or st.session_state.astana_id:
-    datasets = []
-    if st.session_state.almaty_id:
-        with st.spinner("Loading Almaty data from Google Drive..."):
-            df_almaty_raw = read_csv_from_drive(st.session_state.almaty_id)
-            if df_almaty_raw is not None:
-                df_almaty_raw['city'] = 'Almaty'
-                datasets.append(df_almaty_raw)
-                st.success("✅ Almaty data loaded from Google Drive")
-            else:
-                st.error("❌ Failed to load Almaty data. Check file ID.")
-    if st.session_state.astana_id:
-        with st.spinner("Loading Astana data from Google Drive..."):
-            df_astana_raw = read_csv_from_drive(st.session_state.astana_id)
-            if df_astana_raw is not None:
-                df_astana_raw['city'] = 'Astana'
-                datasets.append(df_astana_raw)
-                st.success("✅ Astana data loaded from Google Drive")
-            else:
-                st.error("❌ Failed to load Astana data. Check file ID.")
-    if datasets:
-        df_full = pd.concat(datasets, ignore_index=True)
-    else:
-        st.warning("No data loaded. Please check file IDs.")
+if city_choice == "Almaty":
+    file_id = ALMATY_ID
+    city_name = "Almaty"
 else:
-    st.info("ℹ️ Enter Google Drive file IDs in the sidebar to load real data.")
+    file_id = ASTANA_ID
+    city_name = "Astana"
 
-# If no data, show fallback message
-if df_full is None or df_full.empty:
-    st.warning("No data available. Please enter file IDs in the sidebar.")
-    # You could also provide a fallback synthetic option here, but we'll just stop.
-    st.stop()
+st.sidebar.info(f"Loading data for **{city_name}** from Google Drive")
 
 # ============================================================
-# PROCESS DATA (auto-detect columns)
+# LOAD DATA FOR SELECTED CITY
+# ============================================================
+
+with st.spinner(f"Downloading {city_name} data from Google Drive..."):
+    df_raw = load_csv_from_drive(file_id)
+
+if df_raw is None:
+    st.error(f"❌ Failed to load {city_name} data. Check file ID or internet connection.")
+    st.stop()
+
+st.success(f"✅ {city_name} data loaded: {len(df_raw):,} rows")
+
+# ============================================================
+# AUTO-DETECT COLUMNS AND STANDARDIZE
 # ============================================================
 
 def find_column(df, possible_names):
@@ -97,7 +77,7 @@ def find_column(df, possible_names):
                 return c
     return None
 
-def standardize_dataset(df, forced_city=None):
+def standardize(df, forced_city=None):
     if df is None or df.empty:
         return None
     df = df.copy()
@@ -122,13 +102,7 @@ def standardize_dataset(df, forced_city=None):
         return None
     df["pm25"] = pd.to_numeric(df[pm_col], errors='coerce')
     
-    city_col = find_column(df, ["city", "location", "place", "site"])
-    if forced_city is not None:
-        df["city"] = forced_city
-    elif city_col is not None:
-        df["city"] = df[city_col].astype(str).str.strip()
-    else:
-        df["city"] = "Unknown"
+    df["city"] = forced_city if forced_city else "Unknown"
     
     df = df[["time", "city", "pm25"]].copy()
     df = df.dropna(subset=["time", "pm25"])
@@ -138,47 +112,33 @@ def standardize_dataset(df, forced_city=None):
         return None
     return df
 
-# Standardize each city separately
-city_data = []
-for city in df_full['city'].unique():
-    df_city = df_full[df_full['city'] == city]
-    std = standardize_dataset(df_city, forced_city=city)
-    if std is not None:
-        city_data.append(std)
+df_std = standardize(df_raw, forced_city=city_name)
 
-if not city_data:
-    st.error("Could not standardize data. Check column names.")
+if df_std is None:
+    st.error(f"❌ Could not parse {city_name} data. Check column names.")
+    st.write("Columns found:", df_raw.columns.tolist())
     st.stop()
 
-df_full = pd.concat(city_data, ignore_index=True)
-df_full = df_full.drop_duplicates(subset=["time", "city", "pm25"])
+st.success(f"✅ Standardized {city_name} data: {len(df_std):,} records")
 
 # ============================================================
-# SIDEBAR
+# DATA STATS
 # ============================================================
 
 st.sidebar.header("📁 Dataset")
-st.sidebar.success(f"Records: {len(df_full):,}")
-st.sidebar.write(f"Cities: {df_full['city'].nunique()}")
-
-st.sidebar.header("📍 Select City")
-cities = sorted(df_full["city"].dropna().unique())
-selected_city = st.sidebar.selectbox("City:", cities)
+st.sidebar.success(f"Records: {len(df_std):,}")
+st.sidebar.write(f"City: {city_name}")
 
 # ============================================================
-# CITY DATA
+# PREPARE DATA FOR MODEL
 # ============================================================
 
-df_city = df_full[df_full["city"] == selected_city].copy()
+df_city = df_std.copy()
 df_city = df_city.sort_values("time")
 
 if len(df_city) < 50:
-    st.error(f"Not enough data for {selected_city}. Available: {len(df_city)}")
+    st.error(f"Not enough data for {city_name}. Available: {len(df_city)}")
     st.stop()
-
-# ============================================================
-# FEATURES
-# ============================================================
 
 df_city["hour"] = df_city["time"].dt.hour
 df_city["dayofweek"] = df_city["time"].dt.dayofweek
@@ -214,7 +174,7 @@ y_pred = model.predict(X_test)
 r2 = r2_score(y_test, y_pred)
 mae = mean_absolute_error(y_test, y_pred)
 
-st.subheader(f"📊 {selected_city}")
+st.subheader(f"📊 {city_name}")
 c1, c2, c3 = st.columns(3)
 c1.metric("R² Score", f"{r2:.4f}")
 c2.metric("MAE", f"{mae:.2f} µg/m³")
