@@ -6,22 +6,83 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error, r2_score
 from datetime import timedelta
-import os
-import traceback
+import requests
+import io
 
 st.set_page_config(page_title="Air Quality Prediction", layout="wide")
-
 st.title("🌍 Air Quality Prediction System")
 st.markdown("👤 **Author:** Nurikamal Bolatbay")
 st.markdown("---")
 
 # ============================================================
-# DEBUG: SHOW THAT APP STARTED
+# READ DATA FROM GOOGLE DRIVE
 # ============================================================
-st.write("✅ App started. Loading data...")
+
+def read_csv_from_drive(file_id):
+    """Download CSV from Google Drive using file ID."""
+    url = f"https://drive.google.com/uc?export=download&id={file_id}"
+    try:
+        response = requests.get(url, timeout=30)
+        if response.status_code == 200:
+            return pd.read_csv(io.StringIO(response.text))
+        else:
+            return None
+    except:
+        return None
+
+# Try to get file IDs from session state or from input
+if 'almaty_id' not in st.session_state:
+    st.session_state.almaty_id = ""
+if 'astana_id' not in st.session_state:
+    st.session_state.astana_id = ""
+
+# Show inputs for Google Drive file IDs
+st.sidebar.header("📁 Google Drive Links")
+almaty_id = st.sidebar.text_input("Almaty file ID (air_quality_data.csv)", value=st.session_state.almaty_id)
+astana_id = st.sidebar.text_input("Astana file ID (14.csv)", value=st.session_state.astana_id)
+
+if almaty_id:
+    st.session_state.almaty_id = almaty_id
+if astana_id:
+    st.session_state.astana_id = astana_id
+
+# Load data if IDs are provided
+df_full = None
+if st.session_state.almaty_id or st.session_state.astana_id:
+    datasets = []
+    if st.session_state.almaty_id:
+        with st.spinner("Loading Almaty data from Google Drive..."):
+            df_almaty_raw = read_csv_from_drive(st.session_state.almaty_id)
+            if df_almaty_raw is not None:
+                df_almaty_raw['city'] = 'Almaty'
+                datasets.append(df_almaty_raw)
+                st.success("✅ Almaty data loaded from Google Drive")
+            else:
+                st.error("❌ Failed to load Almaty data. Check file ID.")
+    if st.session_state.astana_id:
+        with st.spinner("Loading Astana data from Google Drive..."):
+            df_astana_raw = read_csv_from_drive(st.session_state.astana_id)
+            if df_astana_raw is not None:
+                df_astana_raw['city'] = 'Astana'
+                datasets.append(df_astana_raw)
+                st.success("✅ Astana data loaded from Google Drive")
+            else:
+                st.error("❌ Failed to load Astana data. Check file ID.")
+    if datasets:
+        df_full = pd.concat(datasets, ignore_index=True)
+    else:
+        st.warning("No data loaded. Please check file IDs.")
+else:
+    st.info("ℹ️ Enter Google Drive file IDs in the sidebar to load real data.")
+
+# If no data, show fallback message
+if df_full is None or df_full.empty:
+    st.warning("No data available. Please enter file IDs in the sidebar.")
+    # You could also provide a fallback synthetic option here, but we'll just stop.
+    st.stop()
 
 # ============================================================
-# HELPER FUNCTIONS
+# PROCESS DATA (auto-detect columns)
 # ============================================================
 
 def find_column(df, possible_names):
@@ -36,151 +97,61 @@ def find_column(df, possible_names):
                 return c
     return None
 
-def read_csv_safe(filename):
-    if not os.path.exists(filename):
-        return None
-    for sep in [',', ';', '\t']:
-        for enc in ['utf-8', 'latin1', 'cp1252']:
-            try:
-                df = pd.read_csv(filename, sep=sep, encoding=enc, on_bad_lines='skip', low_memory=False)
-                if df.shape[1] >= 2:
-                    return df
-            except:
-                pass
-    return None
-
 def standardize_dataset(df, forced_city=None):
+    if df is None or df.empty:
+        return None
+    df = df.copy()
+    df.columns = [str(c).strip() for c in df.columns]
+    
+    time_col = find_column(df, ["time", "datetime", "date", "timestamp", "last_updated"])
+    if time_col is None:
+        possible = pd.to_datetime(df.iloc[:, 0], errors='coerce')
+        if possible.notna().sum() > len(df) * 0.5:
+            time_col = df.columns[0]
+    if time_col is None:
+        return None
+    
+    df["time"] = pd.to_datetime(df[time_col], errors='coerce', utc=True)
     try:
-        if df is None or df.empty:
-            return None
-        df = df.copy()
-        df.columns = [str(c).strip() for c in df.columns]
-        
-        time_col = find_column(df, ["time", "datetime", "date", "timestamp", "last_updated"])
-        if time_col is None:
-            possible = pd.to_datetime(df.iloc[:, 0], errors='coerce')
-            if possible.notna().sum() > len(df) * 0.5:
-                time_col = df.columns[0]
-        if time_col is None:
-            return None
-        
-        df["time"] = pd.to_datetime(df[time_col], errors='coerce', utc=True)
-        try:
-            df["time"] = df["time"].dt.tz_localize(None)
-        except:
-            pass
-        
-        pm_col = find_column(df, ["pm2.5", "pm25", "pm2_5", "pm_2_5", "pm 2.5", "pm2"])
-        if pm_col is None:
-            return None
-        df["pm25"] = pd.to_numeric(df[pm_col], errors='coerce')
-        
-        city_col = find_column(df, ["city", "location", "place", "site"])
-        if forced_city is not None:
-            df["city"] = forced_city
-        elif city_col is not None:
-            df["city"] = df[city_col].astype(str).str.strip()
-        else:
-            df["city"] = "Unknown"
-        
-        df = df[["time", "city", "pm25"]].copy()
-        df = df.dropna(subset=["time", "pm25"])
-        df = df[(df["pm25"] >= 0) & (df["pm25"] <= 1000)]
-        df = df.sort_values("time")
-        if df.empty:
-            return None
-        return df
+        df["time"] = df["time"].dt.tz_localize(None)
     except:
+        pass
+    
+    pm_col = find_column(df, ["pm2.5", "pm25", "pm2_5", "pm_2_5", "pm 2.5", "pm2"])
+    if pm_col is None:
         return None
-
-# ============================================================
-# LOAD DATA
-# ============================================================
-
-@st.cache_data
-def load_data():
-    datasets = []
+    df["pm25"] = pd.to_numeric(df[pm_col], errors='coerce')
     
-    # Try Almaty
-    almaty_raw = read_csv_safe("air_quality_data.csv")
-    if almaty_raw is not None:
-        almaty = standardize_dataset(almaty_raw, forced_city="Almaty")
-        if almaty is not None:
-            datasets.append(almaty)
-    
-    # Try Astana
-    astana_raw = read_csv_safe("14.csv")
-    if astana_raw is not None:
-        astana = standardize_dataset(astana_raw, forced_city="Astana")
-        if astana is not None:
-            datasets.append(astana)
-    
-    if not datasets:
-        return None
-    combined = pd.concat(datasets, ignore_index=True)
-    combined = combined.drop_duplicates(subset=["time", "city", "pm25"])
-    return combined
-
-df_full = None
-try:
-    df_full = load_data()
-except Exception as e:
-    st.error(f"Error loading files: {e}")
-    st.code(traceback.format_exc())
-
-# ============================================================
-# UPLOAD INTERFACE IF NO DATA
-# ============================================================
-
-if df_full is None or df_full.empty:
-    st.warning("No data files found in the directory. Please upload your CSV files below.")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        file1 = st.file_uploader("Upload Almaty data (air_quality_data.csv)", type=['csv'])
-    with col2:
-        file2 = st.file_uploader("Upload Astana data (14.csv)", type=['csv'])
-    
-    if file1 is not None or file2 is not None:
-        datasets = []
-        if file1 is not None:
-            try:
-                df1 = pd.read_csv(file1)
-                std1 = standardize_dataset(df1, forced_city="Almaty")
-                if std1 is not None:
-                    datasets.append(std1)
-                    st.success("✅ Almaty loaded")
-                else:
-                    st.error("❌ Could not parse Almaty file.")
-                    st.write("Columns found:", df1.columns.tolist())
-            except Exception as e:
-                st.error(f"Error: {e}")
-        if file2 is not None:
-            try:
-                df2 = pd.read_csv(file2)
-                std2 = standardize_dataset(df2, forced_city="Astana")
-                if std2 is not None:
-                    datasets.append(std2)
-                    st.success("✅ Astana loaded")
-                else:
-                    st.error("❌ Could not parse Astana file.")
-                    st.write("Columns found:", df2.columns.tolist())
-            except Exception as e:
-                st.error(f"Error: {e}")
-        
-        if datasets:
-            df_full = pd.concat(datasets, ignore_index=True)
-            df_full = df_full.drop_duplicates(subset=["time", "city", "pm25"])
-            st.success(f"✅ Total records: {len(df_full):,}")
-        else:
-            st.error("No valid data.")
-            st.stop()
+    city_col = find_column(df, ["city", "location", "place", "site"])
+    if forced_city is not None:
+        df["city"] = forced_city
+    elif city_col is not None:
+        df["city"] = df[city_col].astype(str).str.strip()
     else:
-        st.stop()
+        df["city"] = "Unknown"
+    
+    df = df[["time", "city", "pm25"]].copy()
+    df = df.dropna(subset=["time", "pm25"])
+    df = df[(df["pm25"] >= 0) & (df["pm25"] <= 1000)]
+    df = df.sort_values("time")
+    if df.empty:
+        return None
+    return df
 
-if df_full is None or df_full.empty:
-    st.error("No data available. Please upload files.")
+# Standardize each city separately
+city_data = []
+for city in df_full['city'].unique():
+    df_city = df_full[df_full['city'] == city]
+    std = standardize_dataset(df_city, forced_city=city)
+    if std is not None:
+        city_data.append(std)
+
+if not city_data:
+    st.error("Could not standardize data. Check column names.")
     st.stop()
+
+df_full = pd.concat(city_data, ignore_index=True)
+df_full = df_full.drop_duplicates(subset=["time", "city", "pm25"])
 
 # ============================================================
 # SIDEBAR
@@ -289,7 +260,7 @@ last_time = df_city["time"].iloc[-1]
 forecast_values = forecast_future(model, df_city, features, hours_ahead=3)
 
 # ============================================================
-# WARNING SYSTEM
+# EARLY WARNING
 # ============================================================
 
 st.header("⚠️ Early Warning System")
@@ -309,13 +280,16 @@ for i, val in enumerate(forecast_values):
             value=f"{val:.1f} µg/m³",
             delta=f"{val - last_actual:+.1f}"
         )
-        st.caption("⚠️ Exceeds" if is_warning else "✅ OK")
+        if is_warning:
+            st.warning("⚠️ Exceeds threshold")
+        else:
+            st.success("✅ OK")
 
 if max(forecast_values) >= WARNING_THRESHOLD:
     st.error("🚨 WARNING: PM2.5 will exceed 50 µg/m³.")
-    st.info("Recommendations: Wear mask, stay indoors, close windows, use purifier.")
+    st.info("💡 Recommendations: Wear mask, stay indoors, close windows, use purifier.")
 else:
-    st.success("✅ No warning: Air quality safe.")
+    st.success("✅ No warning: Air quality is safe.")
 
 st.markdown("---")
 
@@ -323,7 +297,7 @@ st.markdown("---")
 # PLOTS
 # ============================================================
 
-st.header("📈 Forecast")
+st.header("📈 PM2.5 Forecast — Next 3 Hours")
 fig, ax = plt.subplots(figsize=(12, 5))
 history = df_city["pm25"].iloc[-24:].values
 history_x = np.arange(len(history))
@@ -359,6 +333,10 @@ ax3.set_ylabel("Feature")
 ax3.grid(axis="x", alpha=0.3)
 st.pyplot(fig3)
 plt.close(fig3)
+
+st.markdown("---")
+with st.expander("🔎 View latest measurements"):
+    st.dataframe(df_city[["time", "city", "pm25"]].tail(20), use_container_width=True)
 
 st.markdown("---")
 st.caption("Air Quality Prediction System © 2026 Nurikamal Bolatbay")
