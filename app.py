@@ -21,16 +21,60 @@ st.markdown("---")
 ALMATY_ID = "1NKll16FnrW9i9D48n5k0UpSzN6HQcBQQ"
 ASTANA_ID = "1vx5cGXYwp3NY2kVQnClzRCHNUgof5KW"
 
-def load_csv_from_drive(file_id):
+# ============================================================
+# DOWNLOAD FROM GOOGLE DRIVE WITH ERROR HANDLING
+# ============================================================
+
+def download_from_drive(file_id):
+    """Download CSV from Google Drive using direct download URL."""
+    # Try direct download URL first
     url = f"https://drive.google.com/uc?export=download&id={file_id}"
+    
     try:
-        r = requests.get(url, timeout=30)
-        if r.status_code == 200:
-            return pd.read_csv(io.StringIO(r.text))
+        st.write(f"🔄 Attempting to download from: {url}")
+        response = requests.get(url, timeout=30)
+        
+        # Check if we got the confirmation page
+        if "confirm" in response.text and "uc" in response.text:
+            st.write("⚠️ Confirmation page detected. Trying alternative...")
+            # Extract confirmation token
+            import re
+            match = re.search(r'confirm=([^&]+)', response.text)
+            if match:
+                confirm_token = match.group(1)
+                url = f"https://drive.google.com/uc?export=download&id={file_id}&confirm={confirm_token}"
+                response = requests.get(url, timeout=30)
+        
+        if response.status_code == 200 and len(response.text) > 100:
+            # Try to parse as CSV
+            try:
+                df = pd.read_csv(io.StringIO(response.text))
+                if len(df) > 10:
+                    return df
+            except:
+                pass
+            
+            # If CSV parsing fails, check if it's HTML
+            if "html" in response.text.lower()[:200]:
+                st.error("❌ Received HTML instead of CSV. Check file sharing settings.")
+                return None
+            
+            # Try with different separator
+            try:
+                df = pd.read_csv(io.StringIO(response.text), sep=';')
+                if len(df) > 10:
+                    return df
+            except:
+                pass
         else:
+            st.error(f"❌ HTTP {response.status_code}")
             return None
-    except:
+    except Exception as e:
+        st.error(f"❌ Download error: {e}")
         return None
+    
+    st.error("❌ Could not parse CSV. Check file format.")
+    return None
 
 # ============================================================
 # SIDEBAR – CITY SELECTION
@@ -46,20 +90,49 @@ else:
     file_id = ASTANA_ID
     city_name = "Astana"
 
-st.sidebar.info(f"Loading data for **{city_name}** from Google Drive")
-
 # ============================================================
-# LOAD DATA FOR SELECTED CITY
+# LOAD DATA
 # ============================================================
 
-with st.spinner(f"Downloading {city_name} data from Google Drive..."):
-    df_raw = load_csv_from_drive(file_id)
+if 'df_city' not in st.session_state:
+    st.session_state.df_city = None
+
+st.sidebar.info(f"📥 {city_name} data from Google Drive")
+
+if st.sidebar.button(f"Load {city_name} data"):
+    with st.spinner(f"Downloading {city_name}..."):
+        df_raw = download_from_drive(file_id)
+    
+    if df_raw is not None:
+        st.session_state.df_city = df_raw
+        st.success(f"✅ {city_name} loaded: {len(df_raw):,} rows")
+    else:
+        st.session_state.df_city = None
+        st.error(f"❌ Failed to load {city_name}")
+
+# Show upload alternative
+with st.sidebar.expander("📤 Or upload file directly"):
+    uploaded = st.file_uploader("Choose CSV file", type=['csv'])
+    if uploaded is not None:
+        try:
+            df_raw = pd.read_csv(uploaded)
+            if len(df_raw) > 10:
+                st.session_state.df_city = df_raw
+                st.success(f"✅ Uploaded: {len(df_raw):,} rows")
+            else:
+                st.error("File too small or empty.")
+        except Exception as e:
+            st.error(f"Error: {e}")
+
+# ============================================================
+# CHECK DATA
+# ============================================================
+
+df_raw = st.session_state.df_city
 
 if df_raw is None:
-    st.error(f"❌ Failed to load {city_name} data. Check file ID or internet connection.")
+    st.warning("📂 No data loaded. Use the sidebar to load a city or upload a file.")
     st.stop()
-
-st.success(f"✅ {city_name} data loaded: {len(df_raw):,} rows")
 
 # ============================================================
 # AUTO-DETECT COLUMNS AND STANDARDIZE
@@ -89,6 +162,7 @@ def standardize(df, forced_city=None):
         if possible.notna().sum() > len(df) * 0.5:
             time_col = df.columns[0]
     if time_col is None:
+        st.error("❌ No time column found. Columns:", df.columns.tolist())
         return None
     
     df["time"] = pd.to_datetime(df[time_col], errors='coerce', utc=True)
@@ -99,6 +173,7 @@ def standardize(df, forced_city=None):
     
     pm_col = find_column(df, ["pm2.5", "pm25", "pm2_5", "pm_2_5", "pm 2.5", "pm2"])
     if pm_col is None:
+        st.error("❌ No PM2.5 column found. Columns:", df.columns.tolist())
         return None
     df["pm25"] = pd.to_numeric(df[pm_col], errors='coerce')
     
@@ -109,17 +184,19 @@ def standardize(df, forced_city=None):
     df = df[(df["pm25"] >= 0) & (df["pm25"] <= 1000)]
     df = df.sort_values("time")
     if df.empty:
+        st.error("❌ No valid rows after cleaning")
         return None
     return df
 
 df_std = standardize(df_raw, forced_city=city_name)
 
 if df_std is None:
-    st.error(f"❌ Could not parse {city_name} data. Check column names.")
-    st.write("Columns found:", df_raw.columns.tolist())
+    st.error(f"❌ Could not parse {city_name} data.")
+    st.write("Raw columns found:", df_raw.columns.tolist())
+    st.write("First 5 rows:", df_raw.head())
     st.stop()
 
-st.success(f"✅ Standardized {city_name} data: {len(df_std):,} records")
+st.success(f"✅ Ready: {len(df_std):,} records for {city_name}")
 
 # ============================================================
 # DATA STATS
